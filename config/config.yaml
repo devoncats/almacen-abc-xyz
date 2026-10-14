@@ -1,0 +1,48 @@
+# Single configuration for the ABC/XYZ replenishment expert system.
+# The knowledge base (production rules) lives separately in config/rules.yaml.
+
+dataset:
+  # Input follows the Kaggle "Corporación Favorita Grocery Sales Forecasting" layout:
+  #   train.csv   date, store_nbr, item_nbr, unit_sales, onpromotion   (extra columns such as id are ignored)
+  #   items.csv   item_nbr, family, class, perishable
+  #   stores.csv  store_nbr, city, type                               (state, cluster are ignored)
+  # `almacen generate` writes synthetic data in this same layout (run with --data-dir data/synthetic).
+  dir: data/favorita
+  files:
+    sales: train.csv
+    items: items.csv
+    stores: stores.csv
+  columns: {}            # optional renames when your files use other headers, e.g. {qty: unit_sales}
+  city: Quito            # distribution center scope, pushed down to the sales scan; "all" = every city
+  date_from: 2015-08-01  # ignore sales before this date (train.csv spans 2013-01-01..2017-08-15)
+  chunk_rows: 5000000    # rows per chunk while scanning the sales file
+
+paths:
+  rules: config/rules.yaml
+  output_dir: outputs
+
+abc:
+  a_cut: 0.80            # cumulative volume share closing class A
+  b_cut: 0.95            # cumulative volume share closing class B
+
+xyz:
+  x_max_cv: 0.5
+  y_max_cv: 1.0
+
+outliers:                # caps weekly TRAINING demand spikes; the test window is not modified
+  method: none           # none | percentile | mad  (on Favorita, capping lowered fill rate; see README)
+  percentile: 0.99       # percentile: cap at the item's 99th percentile week
+  mad_k: 10.0            # mad: cap at median + k * 1.4826 * MAD (items with MAD = 0 are not capped)
+
+simulation:
+  test_weeks: 12
+  lead_time_weeks: 1
+  initial_stock: order_up_to   # order_up_to | zero
+
+baseline:                # uniform policy applied to every item, used for comparison
+  review_weeks: 1
+  service_level: 0.95
+
+new_item_weeks: 13
+default_shelf_life_weeks: 3
+seed: 42

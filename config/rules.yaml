@@ -1,0 +1,118 @@
+# Knowledge base for the ABC/XYZ replenishment expert system.
+#
+# stage: segment  -> creates the base policy (must set review_type, service_level, review_weeks, lot_weeks)
+# stage: modifier -> adjusts an existing policy
+# salience        -> conflict resolution, higher fires first; ties resolved by file order
+# when            -> AND of conditions; {field: value} or {field: {op: value}}
+#                    ops: eq, ne, lt, le, gt, ge, in, contains, not_contains
+#                    fields: ProductFact fields, flags, policy.<field>
+# then            -> set: {field: value | "$fact_field"}, scale: {field: factor}, flag: [names]
+#
+# review_weeks is R (0 = continuous review); lot_weeks is Q expressed in weeks of mean demand.
+
+rules:
+  # ---------------------------------------------------------------- segment rules (base policy)
+  - id: R-AX
+    stage: segment
+    salience: 100
+    description: "AX: high volume, stable demand -> continuous review (s,Q), high service level"
+    when: [{segment: AX}]
+    then: {set: {review_type: continuous_sQ, service_level: 0.98, review_weeks: 0, lot_weeks: 2}}
+
+  - id: R-AY
+    stage: segment
+    salience: 100
+    description: "AY: high volume, variable demand -> continuous review (s,Q)"
+    when: [{segment: AY}]
+    then: {set: {review_type: continuous_sQ, service_level: 0.97, review_weeks: 0, lot_weeks: 2}}
+
+  - id: R-AZ
+    stage: segment
+    salience: 100
+    description: "AZ: high volume, erratic demand -> weekly review, high safety stock, manual validation"
+    when: [{segment: AZ}]
+    then:
+      set: {review_type: periodic_RS, service_level: 0.95, review_weeks: 1, lot_weeks: 0, safety_factor_mult: 1.5}
+      flag: [manual_validation]
+
+  - id: R-BX
+    stage: segment
+    salience: 100
+    description: "BX: medium volume, stable demand -> biweekly periodic review (R,S)"
+    when: [{segment: BX}]
+    then: {set: {review_type: periodic_RS, service_level: 0.95, review_weeks: 2, lot_weeks: 0}}
+
+  - id: R-BY
+    stage: segment
+    salience: 100
+    description: "BY: medium volume, variable demand -> biweekly periodic review (R,S)"
+    when: [{segment: BY}]
+    then: {set: {review_type: periodic_RS, service_level: 0.93, review_weeks: 2, lot_weeks: 0}}
+
+  - id: R-BZ
+    stage: segment
+    salience: 100
+    description: "BZ: medium volume, erratic demand -> biweekly periodic review (R,S), moderate service"
+    when: [{segment: BZ}]
+    then: {set: {review_type: periodic_RS, service_level: 0.90, review_weeks: 2, lot_weeks: 0}}
+
+  - id: R-CX
+    stage: segment
+    salience: 100
+    description: "CX: low volume, stable demand -> monthly periodic review (R,S) with large lots"
+    when: [{segment: CX}]
+    then: {set: {review_type: periodic_RS, service_level: 0.90, review_weeks: 4, lot_weeks: 0}}
+
+  - id: R-CY
+    stage: segment
+    salience: 100
+    description: "CY: low volume, variable demand -> monthly periodic review (R,S)"
+    when: [{segment: CY}]
+    then: {set: {review_type: periodic_RS, service_level: 0.85, review_weeks: 4, lot_weeks: 0}}
+
+  - id: R-CZ
+    stage: segment
+    salience: 100
+    description: "CZ: low volume, erratic demand -> replenish on demand, no safety stock"
+    when: [{segment: CZ}]
+    then: {set: {review_type: on_demand, service_level: 0.50, review_weeks: 1, lot_weeks: 0}}
+
+  # ---------------------------------------------------------------- modifier rules
+  - id: R-NEW
+    stage: modifier
+    salience: 60
+    description: "New item (< 13 weeks of history): provisional weekly policy until a quarter of history exists"
+    when: [{age_weeks: {lt: 13}}]
+    then:
+      set: {review_type: periodic_RS, review_weeks: 1, lot_weeks: 0, service_level: 0.95, safety_factor_mult: 1.5}
+      flag: [provisional]
+
+  - id: R-DISC
+    stage: modifier
+    salience: 50
+    description: "Established CZ item: flag as discontinuation candidate"
+    when: [{segment: CZ}, {flags: {not_contains: provisional}}]
+    then: {flag: [discontinue_candidate]}
+
+  - id: R-PER
+    stage: modifier
+    salience: 40
+    description: "Perishable: cap maximum stock at the demand covered by its shelf life"
+    when: [{perishable: true}]
+    then: {set: {max_cover_weeks: "$shelf_life_weeks"}}
+
+  - id: R-PER-REVIEW
+    stage: modifier
+    salience: 35
+    description: "Perishable with review period above one week: review weekly so stock fits the shelf-life cap"
+    when: [{perishable: true}, {policy.review_weeks: {gt: 1}}]
+    then: {set: {review_weeks: 1}}
+
+  - id: R-WGT
+    stage: modifier
+    salience: 30
+    description: "Sold by weight: add 10% safety margin for measurement variability"
+    when: [{is_weighted: true}]
+    then:
+      scale: {safety_factor_mult: 1.1}
+      flag: [weighted_item]
