@@ -35,13 +35,16 @@ def _initial_stock(params: PolicyParams, mode: str) -> float:
     if mode == "zero":
         return 0.0
     if params.review_type == "continuous_sQ":
+        assert params.reorder_point is not None and params.order_qty is not None
         return float(params.reorder_point + params.order_qty)
+    assert params.order_up_to is not None
     return float(params.order_up_to)
 
 
 def _order_qty(params: PolicyParams, week_idx: int, position: float) -> float:
     if params.review_type == "continuous_sQ":
         # weekly check approximating continuous review: order n·Q so position rises above s
+        assert params.reorder_point is not None and params.order_qty is not None
         if position > params.reorder_point:
             return 0.0
         n = math.floor((params.reorder_point - position) / params.order_qty) + 1
@@ -49,6 +52,7 @@ def _order_qty(params: PolicyParams, week_idx: int, position: float) -> float:
     # periodic (R,S) and on-demand: review at the end of every R-th week
     if (week_idx + 1) % params.review_weeks != 0:
         return 0.0
+    assert params.order_up_to is not None
     return max(0.0, params.order_up_to - position)
 
 

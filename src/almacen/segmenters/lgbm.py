@@ -184,8 +184,8 @@ class LightGBMSegmenter(Segmenter):
         is_val = samples["origin"] == origins[-1]
         fit_rows, val_rows = samples[~is_val], samples[is_val]
         val_model = self._model().fit(fit_rows[FEATURES], fit_rows["label"])
-        val_pred = val_model.predict(val_rows[FEATURES])
-        tables, report = _diagnostics(val_rows["label"].to_numpy(), val_pred)
+        val_pred = np.asarray(val_model.predict(val_rows[FEATURES]))
+        tables, scores = _diagnostics(val_rows["label"].to_numpy(), val_pred)
 
         # final model on every origin, applied at the train cutoff
         model = self._model().fit(samples[FEATURES], samples["label"])
@@ -193,7 +193,7 @@ class LightGBMSegmenter(Segmenter):
         feats = build_features(
             weekly_train, items, cutoff, p.window_weeks, families, self.cfg
         )
-        proba = model.predict_proba(feats[FEATURES])
+        proba = np.asarray(model.predict_proba(feats[FEATURES]))
         classes = np.asarray(model.classes_)
         pred = pd.DataFrame(
             {
@@ -217,16 +217,15 @@ class LightGBMSegmenter(Segmenter):
         tables["feature_importance"] = importance.sort_values(
             "gain", ascending=False, ignore_index=True
         )
-        report.update(
-            {
-                "origins": len(origins),
-                "first_origin": str(origins[0].date()),
-                "validation_origin": str(origins[-1].date()),
-                "train_samples": len(samples),
-                "validation_samples": len(val_rows),
-                "mean_confidence": round(float(pred["confidence"].mean()), 4),
-            }
-        )
+        report = {
+            **scores,
+            "origins": len(origins),
+            "first_origin": str(origins[0].date()),
+            "validation_origin": str(origins[-1].date()),
+            "train_samples": len(samples),
+            "validation_samples": len(val_rows),
+            "mean_confidence": round(float(pred["confidence"].mean()), 4),
+        }
         return SegmentationResult(seg=seg[RESULT_COLUMNS], tables=tables, report=report)
 
     def plot_diagnostics(self, result: SegmentationResult, charts_dir: Path) -> None:
@@ -256,13 +255,22 @@ def _diagnostics(
     seg_true = np.array([SEGMENT_ORDER[i] for i in y_true])
     seg_pred = np.array([SEGMENT_ORDER[i] for i in y_pred])
     present = sorted(set(y_true) | set(y_pred))
+    # sklearn leaves zero_division unannotated: checkers infer `str` from its "warn" default
     scores = {
         "accuracy": accuracy_score(y_true, y_pred),
         "macro_f1": f1_score(
-            y_true, y_pred, labels=present, average="macro", zero_division=0
+            y_true,
+            y_pred,
+            labels=present,
+            average="macro",
+            zero_division=0,  # pyright: ignore[reportArgumentType]
         ),
         "weighted_f1": f1_score(
-            y_true, y_pred, labels=present, average="weighted", zero_division=0
+            y_true,
+            y_pred,
+            labels=present,
+            average="weighted",
+            zero_division=0,  # pyright: ignore[reportArgumentType]
         ),
         "abc_accuracy": float(
             np.mean([t[0] == p[0] for t, p in zip(seg_true, seg_pred)])
@@ -272,7 +280,10 @@ def _diagnostics(
         ),
     }
     precision, recall, f1, support = precision_recall_fscore_support(
-        y_true, y_pred, labels=labels, zero_division=0
+        y_true,
+        y_pred,
+        labels=labels,
+        zero_division=0,  # pyright: ignore[reportArgumentType]
     )
     per_class = pd.DataFrame(
         {

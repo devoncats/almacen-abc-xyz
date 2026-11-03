@@ -19,6 +19,8 @@ almacen = "almacen.cli:app"
 
 [dependency-groups]
 dev = [
+    "pandas-stubs>=3.1.0.261029",
+    "pyright>=1.1.414",
     "pytest>=8.0",
     "ruff>=0.16.10",
 ]

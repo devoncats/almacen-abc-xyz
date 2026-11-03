@@ -1,3 +1,4 @@
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pandas as pd
@@ -31,7 +32,7 @@ def make_fact(**overrides) -> ProductFact:
     return ProductFact(**base)
 
 
-def weekly_frame(series: dict[int, list[float]]) -> pd.DataFrame:
+def weekly_frame(series: Mapping[int, Sequence[float]]) -> pd.DataFrame:
     n = len(next(iter(series.values())))
     weeks = pd.date_range("2016-01-04", periods=n, freq="7D")
     return pd.DataFrame(

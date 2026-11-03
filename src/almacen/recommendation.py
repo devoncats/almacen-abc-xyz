@@ -116,11 +116,14 @@ def segment_decisions(
 
 def overall_verdict(summary: pd.DataFrame, cfg: DecisionConfig) -> Verdict:
     m = summary.set_index("metric")
-    fill = m.loc["Service level (fill rate)"]
-    inv = m.loc["Average inventory (units)"]
+
+    def value(metric: str, policy: str) -> float:
+        return float(m[policy].loc[metric])
+
+    fill, inv = "Service level (fill rate)", "Average inventory (units)"
     return judge(
-        (fill["expert_system"] - fill["uniform_baseline"]) * 100,
-        _pct_change(inv["expert_system"], inv["uniform_baseline"]),
+        (value(fill, "expert_system") - value(fill, "uniform_baseline")) * 100,
+        _pct_change(value(inv, "expert_system"), value(inv, "uniform_baseline")),
         cfg,
     )
 

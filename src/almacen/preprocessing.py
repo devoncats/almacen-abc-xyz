@@ -137,7 +137,7 @@ def cap_outliers(
         cap = (median + cfg.mad_k * 1.4826 * mad).where(mad > 0, np.inf)
 
     over = weekly_train["units"] > cap
-    log = weekly_train.loc[over, ["item_nbr", "week", "units"]].rename(
+    log = weekly_train[over][["item_nbr", "week", "units"]].rename(
         columns={"units": "units_original"}
     )
     log["units_capped"] = cap[over].to_numpy()
