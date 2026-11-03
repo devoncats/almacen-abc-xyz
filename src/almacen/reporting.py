@@ -75,8 +75,13 @@ def write_table(
 
 
 def plot_pareto(
-    seg: pd.DataFrame, path: Path, a_cut: float = 0.80, b_cut: float = 0.95
+    seg: pd.DataFrame,
+    path: Path,
+    a_cut: float = 0.80,
+    b_cut: float = 0.95,
+    classes_by: str = "classic ABC/XYZ",
 ) -> None:
+    """Cumulative volume curve; shading shows the class assigned by `classes_by`."""
     s = seg.sort_values("total_units", ascending=False).reset_index(drop=True)
     x = (np.arange(1, len(s) + 1) / len(s)) * 100
     fig, ax = plt.subplots(figsize=(6.4, 3.6))
@@ -113,13 +118,15 @@ def plot_pareto(
         ylim=(0, 102),
         xlabel="% of items (sorted by volume)",
         ylabel="Cumulative % of units",
-        title="ABC Pareto curve (training window)",
+        title=f"ABC Pareto curve (training window, {classes_by} classes)",
     )
     fig.savefig(path)
     plt.close(fig)
 
 
-def plot_matrix_heatmap(matrix: pd.DataFrame, path: Path) -> None:
+def plot_matrix_heatmap(
+    matrix: pd.DataFrame, path: Path, classes_by: str = "classic ABC/XYZ"
+) -> None:
     items = matrix.set_index("abc")[["items_X", "items_Y", "items_Z"]].to_numpy()
     vol = matrix.set_index("abc")[
         ["volume_pct_X", "volume_pct_Y", "volume_pct_Z"]
@@ -142,7 +149,9 @@ def plot_matrix_heatmap(matrix: pd.DataFrame, path: Path) -> None:
                 color="white" if dark else TEXT,
             )
     ax.set(
-        xlabel="XYZ (demand variability)", ylabel="ABC (volume)", title="ABC/XYZ matrix"
+        xlabel="XYZ (demand variability)",
+        ylabel="ABC (volume)",
+        title=f"Segment matrix ({classes_by})",
     )
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="% of volume")
     fig.savefig(path)
@@ -150,7 +159,11 @@ def plot_matrix_heatmap(matrix: pd.DataFrame, path: Path) -> None:
 
 
 def plot_cv_vs_volume(
-    seg: pd.DataFrame, path: Path, x_max_cv: float = 0.5, y_max_cv: float = 1.0
+    seg: pd.DataFrame,
+    path: Path,
+    x_max_cv: float = 0.5,
+    y_max_cv: float = 1.0,
+    classes_by: str = "classic ABC/XYZ",
 ) -> None:
     s = seg[np.isfinite(seg["cv"]) & (seg["total_units"] > 0)]
     fig, ax = plt.subplots(figsize=(6.4, 3.8))
@@ -181,7 +194,7 @@ def plot_cv_vs_volume(
     ax.set(
         xlabel="Total units in training window (log scale)",
         ylabel="Coefficient of variation (weekly)",
-        title="Demand variability vs. volume",
+        title=f"Demand variability vs. volume ({classes_by} classes)",
     )
     ax.legend(loc="upper right")
     fig.savefig(path)
@@ -285,6 +298,54 @@ def plot_inventory_timeline(
         ax.set_ylabel("Units")
     axes[0, 0].legend(loc="upper left", ncol=4, fontsize=7, bbox_to_anchor=(0, 1.32))
     fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def plot_confusion_matrix(cm: pd.DataFrame, path: Path) -> None:
+    """Row-normalized confusion matrix of the segment classifier on its validation origin."""
+    counts = cm.set_index("actual").to_numpy(dtype=float)
+    labels = list(cm["actual"])
+    rows = counts.sum(axis=1, keepdims=True)
+    share = np.divide(counts, rows, out=np.zeros_like(counts), where=rows > 0)
+    fig, ax = plt.subplots(figsize=(5.6, 4.6))
+    im = ax.imshow(share * 100, cmap="Blues", vmin=0, vmax=100)
+    ax.grid(False)
+    n = len(labels)
+    ax.set_xticks(range(n), labels)
+    ax.set_yticks(range(n), labels)
+    for i in range(n):
+        for j in range(n):
+            if counts[i, j]:
+                ax.text(
+                    j,
+                    i,
+                    f"{int(counts[i, j])}",
+                    ha="center",
+                    va="center",
+                    fontsize=7,
+                    color="white" if share[i, j] > 0.55 else TEXT,
+                )
+    ax.set(
+        xlabel="Predicted segment",
+        ylabel="Actual segment (next horizon)",
+        title="Segment classifier: validation confusion matrix",
+    )
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="% of actual segment")
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def plot_feature_importance(
+    importance: pd.DataFrame, path: Path, top: int = 12
+) -> None:
+    imp = importance.sort_values("gain_pct").tail(top)
+    fig, ax = plt.subplots(figsize=(6.4, 0.3 * len(imp) + 1.2))
+    ax.barh(imp["feature"], imp["gain_pct"], color=BLUE)
+    ax.grid(axis="y", visible=False)
+    ax.set(
+        xlabel="Share of total gain (%)", title="Segment classifier: feature importance"
+    )
     fig.savefig(path)
     plt.close(fig)
 

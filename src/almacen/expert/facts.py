@@ -23,6 +23,9 @@ class ProductFact:
     is_weighted: bool
     age_weeks: int
     shelf_life_weeks: int | None
+    seg_confidence: float = (
+        1.0  # probability of the assigned segment (1.0 = deterministic)
+    )
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -52,6 +55,7 @@ def build_facts(
             shelf_life_weeks=cfg.default_shelf_life_weeks
             if bool(r["perishable"])
             else None,
+            seg_confidence=float(r.get("confidence", 1.0)),
         )
         for r in df.to_dict("records")
     ]

@@ -10,7 +10,7 @@ from typing import cast
 
 import pandas as pd
 
-from almacen import reporting
+from almacen import recommendation, reporting
 from almacen.config import AppConfig
 from almacen.data.loader import load_dataset
 from almacen.expert.engine import Inference, InferenceEngine
@@ -20,7 +20,8 @@ from almacen.metrics import METRIC_COLUMNS, aggregate, compare
 from almacen.policy import baseline_params, compute_params
 from almacen.preprocessing import age_in_weeks, cap_outliers, prepare, split_train_test
 from almacen.schemas import SchemaError
-from almacen.segmentation import SEGMENT_ORDER, segment, segment_matrix
+from almacen.segmentation import SEGMENT_ORDER, segment_matrix
+from almacen.segmenters import get_segmenter
 from almacen.simulation import simulate
 
 TIMELINE_EXAMPLES = ("AX", "AZ", "CZ")
@@ -34,6 +35,8 @@ class RunResult:
     inferences: list[Inference]
     comparison: pd.DataFrame
     summary: pd.DataFrame
+    segmenter: str
+    verdict: recommendation.Verdict
 
 
 def _recommendations(
@@ -56,7 +59,7 @@ def _recommendations(
                 "fired_rules": ">".join(f.rule_id for f in inf.trace),
             }
         )
-    cols = ["item_nbr", "segment", "total_units", "mean_w", "std_w", "cv"]
+    cols = ["item_nbr", "segment", "confidence", "total_units", "mean_w", "std_w", "cv"]
     return seg[cols].merge(pd.DataFrame(rows), on="item_nbr")
 
 
@@ -68,10 +71,12 @@ def _policy_by_segment(recs: pd.DataFrame) -> pd.DataFrame:
             "manual_validation",
             "discontinue_candidate",
             "weighted_item",
+            "low_confidence",
         )
     }
     out = recs.groupby("segment").agg(
         n_items=("item_nbr", "size"),
+        mean_confidence=("confidence", "mean"),
         review_type=("review_type", lambda s: s.mode().iat[0]),
         service_level=("service_level", "mean"),
         review_weeks=("review_weeks", "mean"),
@@ -114,6 +119,7 @@ def run(cfg: AppConfig) -> RunResult:
     run_id = datetime.now(UTC).astimezone().strftime("%Y%m%d-%H%M%S")
     out_dir = cfg.output_dir / run_id
     tables_dir, charts_dir = out_dir / "tables", out_dir / "charts"
+    segmenter = get_segmenter(cfg)  # fail on an unknown method before loading data
 
     # 1-2. load and preprocess
     ds = cfg.dataset
@@ -160,8 +166,9 @@ def run(cfg: AppConfig) -> RunResult:
         (items["age_weeks"] < cfg.new_item_weeks).sum()
     )  # at train cutoff
 
-    # 4. segmentation
-    seg = segment(train, cfg.abc, cfg.xyz)
+    # 4. segmentation (classic ABC/XYZ or a learned model, same nine segments)
+    segmentation = segmenter.fit_predict(train, items)
+    seg = segmentation.seg
     prep.report["items_without_training_history"] = int(len(items) - len(seg))
     prep.report["train_weeks"] = int(train["week"].nunique())
     prep.report["test_weeks"] = int(test["week"].nunique())
@@ -220,15 +227,21 @@ def run(cfg: AppConfig) -> RunResult:
     reporting.write_table(summary, tables_dir, "metrics_summary")
     reporting.write_table(by_segment, tables_dir, "metrics_by_segment")
     reporting.write_table(by_abc, tables_dir, "metrics_by_abc")
+    for name, table in segmentation.tables.items():
+        reporting.write_table(table, tables_dir, name)
+    decisions = recommendation.segment_decisions(by_segment, seg, cfg.decision)
+    reporting.write_table(decisions, tables_dir, "decision_by_segment")
 
     # charts
+    by = segmenter.label
     reporting.plot_pareto(
-        seg, charts_dir / "abc_pareto.png", cfg.abc.a_cut, cfg.abc.b_cut
+        seg, charts_dir / "abc_pareto.png", cfg.abc.a_cut, cfg.abc.b_cut, by
     )
-    reporting.plot_matrix_heatmap(matrix, charts_dir / "abc_xyz_matrix.png")
+    reporting.plot_matrix_heatmap(matrix, charts_dir / "abc_xyz_matrix.png", by)
     reporting.plot_cv_vs_volume(
-        seg, charts_dir / "cv_vs_volume.png", cfg.xyz.x_max_cv, cfg.xyz.y_max_cv
+        seg, charts_dir / "cv_vs_volume.png", cfg.xyz.x_max_cv, cfg.xyz.y_max_cv, by
     )
+    segmenter.plot_diagnostics(segmentation, charts_dir)
     reporting.plot_metrics_by_segment(by_segment, charts_dir / "metrics_by_segment.png")
     examples = {}
     for label in TIMELINE_EXAMPLES:
@@ -243,6 +256,26 @@ def run(cfg: AppConfig) -> RunResult:
         charts_dir / "inventory_timeline.png",
     )
 
+    # warehouse-manager report
+    periods = {
+        "train": [str(train["week"].min().date()), str(train_end.date())],
+        "test": [str(test["week"].min().date()), str(test["week"].max().date())],
+    }
+    report_md, verdict = recommendation.build_report(
+        cfg,
+        run_id=run_id,
+        segmenter_label=segmenter.label,
+        periods=periods,
+        summary=summary,
+        decisions=decisions,
+        policy_by_segment=_policy_by_segment(recs),
+        recs=recs,
+        model_report=segmentation.report,
+        model_tables=segmentation.tables,
+        charts=sorted(p.name for p in charts_dir.glob("*.png")),
+    )
+    (out_dir / "recommendation.md").write_text(report_md, encoding="utf-8")
+
     # explanations + run summary
     reporting.write_explanations(inferences, out_dir / "explanations.jsonl")
     reporting.write_run_summary(
@@ -252,11 +285,11 @@ def run(cfg: AppConfig) -> RunResult:
         out_dir / "run.json",
         extra={
             "run_id": run_id,
-            "train_period": [str(train["week"].min().date()), str(train_end.date())],
-            "test_period": [
-                str(test["week"].min().date()),
-                str(test["week"].max().date()),
-            ],
+            "segmenter": segmenter.name,
+            "segmenter_report": segmentation.report,
+            "decision": {"decision": verdict.decision, "action": verdict.reason},
+            "train_period": periods["train"],
+            "test_period": periods["test"],
             "rules": [asdict(r) for r in engine.rules],
             "timeline_examples": examples,
             "elapsed_seconds": round(time.perf_counter() - t0, 2),
@@ -269,4 +302,6 @@ def run(cfg: AppConfig) -> RunResult:
         inferences=inferences,
         comparison=by_segment,
         summary=summary,
+        segmenter=segmenter.label,
+        verdict=verdict,
     )

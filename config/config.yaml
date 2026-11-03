@@ -43,6 +43,25 @@ baseline:                # uniform policy applied to every item, used for compar
   review_weeks: 1
   service_level: 0.95
 
+segmenter:               # who assigns the nine segments the rules consume (CLI: --segmenter)
+  method: abc-xyz        # abc-xyz (classic cuts) | lightgbm (predicted segment of the next test_weeks)
+  lightgbm:              # trained on rolling origins inside the training window only
+    window_weeks: 26     # weeks of history summarized by the features at each origin
+    stride_weeks: 4      # spacing between training origins; the last one is held out for validation
+    min_history_weeks: 8 # first origin
+    n_estimators: 300
+    learning_rate: 0.05
+    num_leaves: 15
+    min_child_samples: 20
+    subsample: 0.8
+    colsample_bytree: 0.8
+    class_weight: null   # null | balanced
+
+decision:                # criteria of the warehouse-manager recommendation (recommendation.md)
+  fill_rate_tolerance_pp: 0.5     # fill-rate loss still accepted when inventory does not grow
+  max_inventory_increase_pct: 20  # extra average inventory accepted for a fill-rate gain
+  top_items: 15                   # rows per action list in the report
+
 new_item_weeks: 13
 default_shelf_life_weeks: 3
 seed: 42

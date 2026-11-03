@@ -66,6 +66,13 @@ def test_weighted_item_scales_safety(engine):
     assert "weighted_item" in inf.flags
 
 
+def test_uncertain_ml_segment_requires_manual_validation(engine):
+    inf = engine.infer(make_fact(seg_confidence=0.4))
+    assert {"low_confidence", "manual_validation"} <= set(inf.flags)
+    assert inf.policy.manual_validation
+    assert "low_confidence" not in engine.infer(make_fact()).flags  # classic: 1.0
+
+
 def test_no_matching_segment_rule_raises(rules_path):
     rules = [r for r in load_rules(rules_path) if r.id != "R-AX"]
     with pytest.raises(InferenceError):

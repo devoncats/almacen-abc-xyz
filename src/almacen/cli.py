@@ -69,11 +69,16 @@ def run(
         str | None,
         typer.Option(help="Override outlier capping: none | percentile | mad."),
     ] = None,
+    segmenter: Annotated[
+        str | None,
+        typer.Option(help="Override segmentation model: abc-xyz | lightgbm."),
+    ] = None,
 ) -> None:
     """Run segmentation, inference, simulation and reporting."""
     from dataclasses import replace
 
     from almacen.pipeline import run as run_pipeline
+    from almacen.recommendation import DECISION_LABELS
 
     try:
         cfg = load_config(config)
@@ -92,18 +97,26 @@ def run(
             if outliers not in ("none", "percentile", "mad"):
                 raise ConfigError("--outliers must be 'none', 'percentile' or 'mad'")
             cfg = replace(cfg, outliers=replace(cfg.outliers, method=outliers))
+        if segmenter is not None:
+            cfg = replace(cfg, segmenter=replace(cfg.segmenter, method=segmenter))
         result = run_pipeline(cfg)
     except USER_ERRORS as exc:
         _fail(exc)
 
     seg_counts = result.segments["segment"].value_counts()
     typer.echo(
-        f"\nItems segmented: {len(result.segments)}  |  "
+        f"\nItems segmented ({result.segmenter}): {len(result.segments)}  |  "
         + "  ".join(f"{s}:{seg_counts.get(s, 0)}" for s in sorted(seg_counts.index))
     )
     typer.echo("\nMetrics (test window, expert system vs. uniform baseline):\n")
     typer.echo(result.summary.round(4).to_markdown(index=False))
-    typer.echo(f"\nOutputs written to {result.out_dir}")
+    typer.secho(
+        f"\nRecommendation: {DECISION_LABELS[result.verdict.decision]} - "
+        f"{result.verdict.reason}",
+        bold=True,
+    )
+    typer.echo(f"Manager report: {result.out_dir / 'recommendation.md'}")
+    typer.echo(f"Outputs written to {result.out_dir}")
 
 
 @app.command()

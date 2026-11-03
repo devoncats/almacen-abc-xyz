@@ -94,6 +94,13 @@ rules:
     when: [{segment: CZ}, {flags: {not_contains: provisional}}]
     then: {flag: [discontinue_candidate]}
 
+  - id: R-LOWCONF
+    stage: modifier
+    salience: 45
+    description: "ML segment with probability below 0.5: segment is uncertain, validate the policy manually"
+    when: [{seg_confidence: {lt: 0.5}}]
+    then: {flag: [low_confidence, manual_validation]}
+
   - id: R-PER
     stage: modifier
     salience: 40

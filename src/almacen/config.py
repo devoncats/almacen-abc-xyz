@@ -78,6 +78,42 @@ class BaselineConfig:
 
 
 @dataclass(frozen=True)
+class LightGBMConfig:
+    """Rolling-origin training of the segment classifier (labels = classic segment of the next
+    `simulation.test_weeks` weeks)."""
+
+    window_weeks: int = 26  # weeks of history summarized by the features
+    stride_weeks: int = 4  # spacing between training origins
+    min_history_weeks: int = 8  # first origin
+    n_estimators: int = 300
+    learning_rate: float = 0.05
+    num_leaves: int = 15
+    min_child_samples: int = 20
+    subsample: float = 0.8
+    colsample_bytree: float = 0.8
+    class_weight: Literal["balanced"] | None = None
+
+
+@dataclass(frozen=True)
+class SegmenterConfig:
+    method: str = "abc-xyz"  # abc-xyz | lightgbm
+    lightgbm: LightGBMConfig = field(default_factory=LightGBMConfig)
+
+
+@dataclass(frozen=True)
+class DecisionConfig:
+    """Criteria for the warehouse-manager recommendation (expert policies vs. uniform baseline)."""
+
+    fill_rate_tolerance_pp: float = (
+        0.5  # fill-rate loss still accepted, in percentage points
+    )
+    max_inventory_increase_pct: float = (
+        20.0  # extra average inventory accepted for the same service
+    )
+    top_items: int = 15  # rows per action list in the report
+
+
+@dataclass(frozen=True)
 class AppConfig:
     rules_path: Path
     output_dir: Path
@@ -87,6 +123,8 @@ class AppConfig:
     outliers: OutlierConfig = field(default_factory=OutlierConfig)
     sim: SimConfig = field(default_factory=SimConfig)
     baseline: BaselineConfig = field(default_factory=BaselineConfig)
+    segmenter: SegmenterConfig = field(default_factory=SegmenterConfig)
+    decision: DecisionConfig = field(default_factory=DecisionConfig)
     new_item_weeks: int = 13
     default_shelf_life_weeks: int = 3
     seed: int = 42
@@ -149,6 +187,17 @@ def _dataset(raw: dict[str, Any] | None) -> DatasetConfig:
     )
 
 
+def _segmenter(raw: dict[str, Any] | None) -> SegmenterConfig:
+    raw = dict(raw or {})
+    lgbm = _section(LightGBMConfig, raw.pop("lightgbm", None), "segmenter.lightgbm")
+    unknown = set(raw) - {"method"}
+    if unknown:
+        raise ConfigError(f"unknown keys in 'segmenter': {sorted(unknown)}")
+    return SegmenterConfig(
+        method=str(raw.get("method", SegmenterConfig.method)), lightgbm=lgbm
+    )
+
+
 def _validate(cfg: AppConfig) -> None:
     if cfg.dataset.chunk_rows < 1:
         raise ConfigError("dataset.chunk_rows must be >= 1")
@@ -170,6 +219,22 @@ def _validate(cfg: AppConfig) -> None:
         raise ConfigError("simulation.initial_stock must be 'order_up_to' or 'zero'")
     if not 0 < cfg.baseline.service_level < 1:
         raise ConfigError("baseline.service_level must be in (0, 1)")
+    lg = cfg.segmenter.lightgbm
+    if min(lg.window_weeks, lg.stride_weeks, lg.min_history_weeks, lg.n_estimators) < 1:
+        raise ConfigError(
+            "segmenter.lightgbm window_weeks, stride_weeks, min_history_weeks and "
+            "n_estimators must be >= 1"
+        )
+    if not (0 < lg.subsample <= 1 and 0 < lg.colsample_bytree <= 1):
+        raise ConfigError(
+            "segmenter.lightgbm subsample and colsample_bytree must be in (0, 1]"
+        )
+    if lg.class_weight not in (None, "balanced"):
+        raise ConfigError("segmenter.lightgbm.class_weight must be null or 'balanced'")
+    if cfg.decision.fill_rate_tolerance_pp < 0 or cfg.decision.top_items < 1:
+        raise ConfigError(
+            "decision.fill_rate_tolerance_pp must be >= 0 and decision.top_items >= 1"
+        )
 
 
 def load_config(path: Path) -> AppConfig:
@@ -187,6 +252,8 @@ def load_config(path: Path) -> AppConfig:
         "outliers",
         "simulation",
         "baseline",
+        "segmenter",
+        "decision",
         "new_item_weeks",
         "default_shelf_life_weeks",
         "seed",
@@ -205,6 +272,8 @@ def load_config(path: Path) -> AppConfig:
         outliers=_section(OutlierConfig, raw.get("outliers"), "outliers"),
         sim=_section(SimConfig, raw.get("simulation"), "simulation"),
         baseline=_section(BaselineConfig, raw.get("baseline"), "baseline"),
+        segmenter=_segmenter(raw.get("segmenter")),
+        decision=_section(DecisionConfig, raw.get("decision"), "decision"),
         new_item_weeks=int(raw.get("new_item_weeks", 13)),
         default_shelf_life_weeks=int(raw.get("default_shelf_life_weeks", 3)),
         seed=int(raw.get("seed", 42)),

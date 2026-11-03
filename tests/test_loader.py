@@ -114,6 +114,9 @@ def test_data_dir_override_keeps_file_names(tmp_path):
         "dataset:\n  columns: {qty: unit_sales, q2: unit_sales}\n",  # two columns -> same target
         "dataset:\n  date_from: not-a-date\n",
         "datasets: {}\n",  # unknown top-level key
+        "segmenter:\n  lightgbm: {trees: 10}\n",  # unknown model parameter
+        "segmenter:\n  lightgbm: {class_weight: heavy}\n",
+        "decision:\n  top_items: 0\n",
     ],
 )
 def test_config_rejects_invalid(tmp_path, bad):

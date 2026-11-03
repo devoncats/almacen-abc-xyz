@@ -3,7 +3,7 @@ import json
 import pytest
 from conftest import ROOT
 
-from almacen.config import AppConfig, DatasetConfig, SimConfig
+from almacen.config import AppConfig, DatasetConfig, SegmenterConfig, SimConfig
 from almacen.data.loader import load_dataset
 from almacen.data.synthetic import SyntheticSpec, generate, to_favorita_layout
 from almacen.pipeline import run
@@ -79,3 +79,37 @@ def test_end_to_end_run(tmp_path, data_dir):
     assert len(lines) == len(result.segments)
     summary = json.loads((result.out_dir / "run.json").read_text())
     assert summary["overall_metrics"][0]["fill_rate_expert"] > 0
+    assert summary["segmenter"] == "abc-xyz"
+    report = (result.out_dir / "recommendation.md").read_text(encoding="utf-8")
+    assert "## Decision" in report
+    assert "Segmentation model" not in report  # no diagnostics for the classic method
+
+
+def test_end_to_end_run_lightgbm(tmp_path, data_dir):
+    cfg = AppConfig(
+        rules_path=ROOT / "config" / "rules.yaml",
+        output_dir=tmp_path / "out",
+        dataset=DatasetConfig(dir=data_dir),
+        sim=SimConfig(test_weeks=8),
+        segmenter=SegmenterConfig(method="lightgbm"),
+    )
+    result = run(cfg)
+    tables, charts = result.out_dir / "tables", result.out_dir / "charts"
+    # same outputs as the classic method ...
+    for name in (
+        "metrics_summary",
+        "metrics_by_segment",
+        "abc_xyz_matrix",
+        "recommendations",
+    ):
+        assert (tables / f"{name}.csv").exists()
+    # ... plus the model diagnostics
+    for name in ("model_metrics", "confusion_matrix", "feature_importance"):
+        assert (tables / f"{name}.csv").exists()
+    for chart in ("model_confusion_matrix", "model_feature_importance", "abc_pareto"):
+        assert (charts / f"{chart}.png").exists()
+    summary = json.loads((result.out_dir / "run.json").read_text())
+    assert summary["segmenter"] == "lightgbm"
+    assert 0 <= summary["segmenter_report"]["validation_accuracy"] <= 1
+    report = (result.out_dir / "recommendation.md").read_text(encoding="utf-8")
+    assert "## Segmentation model (LightGBM)" in report
